@@ -241,7 +241,7 @@ if df is not None and not df.empty:
 
 
     # ========================================================
-    # 7. KDA 및 통계 계산
+    # 7. KDA 및 통계 계산 (딜량 미표시 경기 제외 처리)
     # ========================================================
     games = len(filtered_df)
 
@@ -251,8 +251,19 @@ if df is not None and not df.empty:
 
     kda = ((kills + assists) / deaths) if deaths > 0 else ((kills + assists) if games > 0 else 0.0)
 
-    avg_damage = filtered_df["딜량"].mean() if games > 0 else 0.0
+    # 💡 딜량이 기재된 경기만 추출 (>0)
+    valid_dmg_df = filtered_df[filtered_df["딜량"] > 0]
+    valid_dmg_games = len(valid_dmg_df)
+
+    avg_damage = valid_dmg_df["딜량"].mean() if valid_dmg_games > 0 else 0.0
     avg_gold = filtered_df["골드"].mean() if games > 0 else 0.0
+
+    # 💡 골드당 딜량 (딜량과 골드가 모두 기재된 경기 기준)
+    valid_dmg_gold_df = filtered_df[(filtered_df["딜량"] > 0) & (filtered_df["골드"] > 0)]
+    if not valid_dmg_gold_df.empty:
+        damage_per_gold = (valid_dmg_gold_df["딜량"] / valid_dmg_gold_df["골드"]).mean()
+    else:
+        damage_per_gold = 0.0
 
 
     # ========================================================
@@ -282,12 +293,13 @@ if df is not None and not df.empty:
     st.divider()
 
     st.subheader("📊 개인 플레이 통계")
-    p1, p2, p3, p4, p5 = st.columns(5)
+    p1, p2, p3, p4, p5, p6 = st.columns(6)
     p1.metric("K / D / A", f"{int(kills)} / {int(deaths)} / {int(assists)}")
     p2.metric("평균 KDA", f"{kda:.2f}:1")
-    p3.metric("평균 딜량", f"{avg_damage:,.0f}")
-    p4.metric("평균 골드", f"{avg_gold:,.0f}")
-    p5.metric("플레이 세트", f"{games:,}세트")
+    p3.metric("평균 딜량", f"{avg_damage:,.0f}" if valid_dmg_games > 0 else "-")
+    p4.metric("골드당 딜량", f"{damage_per_gold:.2f}" if valid_dmg_games > 0 else "-")
+    p5.metric("평균 골드", f"{avg_gold:,.0f}")
+    p6.metric("플레이 세트", f"{games:,}세트")
 
     st.divider()
 
