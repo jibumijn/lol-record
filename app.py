@@ -34,21 +34,10 @@ def load_data(file_source):
 
         # ----------------------------------------------------
         # 컬럼 자동 맞춤 및 열 밀림 방지
-        # 엑셀의 첫 번째 열이 Index(Unnamed)인 경우 제외 처리
         # ----------------------------------------------------
         cols = [
-            "날짜",
-            "세트",
-            "이름",
-            "매치결과",
-            "세트결과",
-            "라인",
-            "챔피언",
-            "킬",
-            "데스",
-            "어시스트",
-            "딜량",
-            "골드",
+            "날짜", "세트", "이름", "매치결과", "세트결과", 
+            "라인", "챔피언", "킬", "데스", "어시스트", "딜량", "골드"
         ]
 
         # 'Unnamed' 또는 인덱스 열이 A열에 있는 경우 제거
@@ -162,13 +151,44 @@ else:
 
 if df is not None and not df.empty:
 
+    # --------------------------------------------------------
+    # 4-1. 맞상대(동일 날짜 + 세트 + 라인) 매칭 데이터 생성
+    # --------------------------------------------------------
+    merged_h2h = pd.merge(
+        df, df,
+        on=["날짜", "세트", "라인"],
+        suffixes=("", "_상대")
+    )
+    h2h_df = merged_h2h[merged_h2h["이름"] != merged_h2h["이름_상대"]].copy()
+
+
+    # --------------------------------------------------------
+    # 4-2. 사이드바 필터 설정
+    # --------------------------------------------------------
     st.sidebar.subheader("🔍 검색 필터")
 
     # 이름 필터
     people = ["전체"] + sorted([p for p in df["이름"].unique() if p])
     selected_person = st.sidebar.selectbox("이름", people)
 
+    # 맞상대 필터 (이름을 선택한 경우에만 해당 상대 선택창 활성화)
+    opponents = ["전체"]
+    if selected_person != "전체":
+        opp_list = sorted(h2h_df[h2h_df["이름"] == selected_person]["이름_상대"].unique())
+        opponents += opp_list
+    selected_opponent = st.sidebar.selectbox("맞라인 상대 소환사", opponents)
+
+    # 기본 필터링 대상
     person_subset = df if selected_person == "전체" else df[df["이름"] == selected_person]
+
+    # 상대 소환사를 선택한 경우 해당 상대와 맞붙은 경기만 필터링
+    if selected_person != "전체" and selected_opponent != "전체":
+        h2h_filtered_keys = h2h_df[
+            (h2h_df["이름"] == selected_person) & 
+            (h2h_df["이름_상대"] == selected_opponent)
+        ][["날짜", "세트", "라인"]]
+        
+        person_subset = pd.merge(person_subset, h2h_filtered_keys, on=["날짜", "세트", "라인"])
 
     # 라인 필터
     lines = ["전체"] + sorted([l for l in person_subset["라인"].unique() if l])
@@ -178,7 +198,7 @@ if df is not None and not df.empty:
     champions = ["전체"] + sorted([c for c in person_subset["챔피언"].unique() if c])
     selected_champion = st.sidebar.selectbox("챔피언", champions)
 
-    # 최종 필터링
+    # 최종 필터링 적용
     filtered_df = person_subset.copy()
 
     if selected_line != "전체":
@@ -238,6 +258,11 @@ if df is not None and not df.empty:
     # ========================================================
     # 8. 대시보드 출력
     # ========================================================
+    
+    # 💡 특정 상대 선택 시 상단 안내 표기
+    if selected_person != "전체" and selected_opponent != "전체":
+        st.info(f"⚔️ **{selected_person}** vs **{selected_opponent}** 맞라인 상대전적 분석 결과입니다.")
+
     st.subheader("🏆 매치 전적")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("매치 수", f"{match_games:,}매치")
@@ -268,7 +293,50 @@ if df is not None and not df.empty:
 
 
     # ========================================================
-    # 9. 상세 경기 기록
+    # 9. 맞라인 상대전적 전체 요약표 (소환사 선택 시 표기)
+    # ========================================================
+    if selected_person != "전체":
+        st.subheader(f"⚔️ {selected_person} 소환사의 상대별 전적 요약")
+        
+        person_h2h = h2h_df[h2h_df["이름"] == selected_person].copy()
+        
+        if not person_h2h.empty:
+            # 세트 집계
+            set_sum = person_h2h.groupby("이름_상대").agg(
+                세트_판수=("세트결과", "count"),
+                세트_승=("세트결과", lambda x: (x == "승").sum()),
+                세트_패=("세트결과", lambda x: (x == "패").sum())
+            ).reset_index()
+            set_sum["세트_승률"] = (set_sum["세트_승"] / set_sum["세트_판수"] * 100).round(1).astype(str) + "%"
+
+            # 매치 집계
+            match_uniq = person_h2h.drop_duplicates(subset=["날짜", "이름_상대"])
+            match_sum = match_uniq.groupby("이름_상대").agg(
+                매치_판수=("매치결과_전체", "count"),
+                매치_승=("매치결과_전체", lambda x: (x == "승").sum()),
+                매치_패=("매치결과_전체", lambda x: (x == "패").sum())
+            ).reset_index()
+            match_sum["매치_승률"] = (match_sum["매치_승"] / match_sum["매치_판수"] * 100).round(1).astype(str) + "%"
+
+            # 데이터 합치기
+            h2h_summary_table = pd.merge(match_sum, set_sum, on="이름_상대")
+            h2h_summary_table.rename(columns={"이름_상대": "상대 소환사"}, inplace=True)
+            
+            # 보기 좋게 열 순서 정리
+            h2h_summary_table = h2h_summary_table[
+                ["상대 소환사", "매치_판수", "매치_승", "매치_패", "매치_승률", "세트_판수", "세트_승", "세트_패", "세트_승률"]
+            ]
+
+            st.dataframe(
+                h2h_summary_table,
+                width="stretch",
+                hide_index=True
+            )
+            st.divider()
+
+
+    # ========================================================
+    # 10. 상세 경기 기록
     # ========================================================
     st.subheader("📜 상세 경기 기록")
 
